@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -71,12 +72,62 @@ class EduVulcanCoordinator(DataUpdateCoordinator[dict[int, PupilData]]):
             pupil_data = PupilData(account=account)
 
             try:
-                pupil_data.schedule = await self.api.get_schedule(
+                # Raw fetch (same endpoint get_schedule uses) so we can both
+                # build the models AND debug-log entries carrying change info.
+                envelope = await self.api._http.request(  # noqa: SLF001
+                    method="GET",
                     rest_url=rest_url,
                     pupil_id=pupil_id,
-                    date_from=today,
-                    date_to=today + timedelta(days=SCHEDULE_DAYS_AHEAD),
-                )
+                    endpoint="mobile/schedule/withchanges/byPupil",
+                    query={
+                        "pupilId": pupil_id,
+                        "dateFrom": today,
+                        "dateTo": today + timedelta(days=SCHEDULE_DAYS_AHEAD),
+                        "lastId": -2_147_483_648,
+                        "pageSize": 500,
+                        "lastSyncDate": datetime(1970, 1, 1, 1, 0, 0),
+                    },
+                ) or []
+                pupil_data.schedule = [
+                    Schedule.model_validate(entry) for entry in envelope
+                ]
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    if envelope:
+                        _LOGGER.debug(
+                            "eduVULCAN schedule keys (pupil %s): %s",
+                            pupil_id,
+                            sorted(envelope[0].keys()),
+                        )
+                    for entry in envelope:
+                        if any(
+                            entry.get(k)
+                            for k in ("Substitution", "Change", "Event", "MergeChangeId")
+                        ):
+                            _LOGGER.debug(
+                                "eduVULCAN raw changed lesson (pupil %s): %s",
+                                pupil_id,
+                                json.dumps(entry, ensure_ascii=False, default=str),
+                            )
+                    # Second suspect: the schedule/extra endpoint.
+                    extra_envelope = await self.api._http.request(  # noqa: SLF001
+                        method="GET",
+                        rest_url=rest_url,
+                        pupil_id=pupil_id,
+                        endpoint="mobile/schedule/extra/withchanges/byPupil",
+                        query={
+                            "pupilId": pupil_id,
+                            "dateFrom": today,
+                            "dateTo": today + timedelta(days=SCHEDULE_DAYS_AHEAD),
+                            "lastId": -2_147_483_648,
+                            "pageSize": 500,
+                            "lastSyncDate": datetime(1970, 1, 1, 1, 0, 0),
+                        },
+                    )
+                    _LOGGER.debug(
+                        "eduVULCAN raw schedule_extra (pupil %s): %s",
+                        pupil_id,
+                        json.dumps(extra_envelope, ensure_ascii=False, default=str),
+                    )
                 pupil_data.homework = await self.api.get_homework(
                     rest_url=rest_url,
                     pupil_id=pupil_id,
