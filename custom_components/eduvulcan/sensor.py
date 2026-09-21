@@ -22,9 +22,10 @@ from .const import DOMAIN, MANUFACTURER
 from .coordinator import EduVulcanCoordinator, PupilData
 from .iris.models import Schedule
 
-# ScheduleChange.type semantics (per Wulkanowy/hebe conventions):
+# Change.Type semantics (per Wulkanowy/hebe conventions):
 # 1 = lesson cancelled, 2 = substitution, 3 = rescheduled, 4 = class merged.
 CHANGE_CANCELLED = 1
+CHANGE_RESCHEDULED = 3
 
 
 async def async_setup_entry(
@@ -48,7 +49,15 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _lesson_is_cancelled(lesson: Schedule) -> bool:
+def _change_type(change: dict | None) -> int | None:
+    if not change:
+        return None
+    return (change.get("Change") or {}).get("Type")
+
+
+def _lesson_is_cancelled(lesson: Schedule, change: dict | None = None) -> bool:
+    if _change_type(change) == CHANGE_CANCELLED:
+        return True
     sub = lesson.substitution
     return bool(
         sub
@@ -59,14 +68,37 @@ def _lesson_is_cancelled(lesson: Schedule) -> bool:
     )
 
 
-def _lesson_change_description(lesson: Schedule) -> str | None:
+def _lesson_change_description(
+    lesson: Schedule, change: dict | None = None
+) -> str | None:
     """Human-readable substitution/change info, if any."""
+    # Primary source: entry from mobile/schedule/changes/byPupil (raw dict).
+    if change:
+        if _change_type(change) == CHANGE_CANCELLED:
+            return change.get("Reason") or "odwołane"
+        parts: list[str] = []
+        subject = (change.get("Subject") or {}).get("Name")
+        if subject and (not lesson.subject or subject != lesson.subject.name):
+            parts.append(f"przedmiot: {subject}")
+        teacher = (change.get("TeacherPrimary") or {}).get("DisplayName")
+        if teacher:
+            parts.append(f"zastępstwo: {teacher}")
+        room = (change.get("Room") or {}).get("Code")
+        if room and (not lesson.room or room != lesson.room.code):
+            parts.append(f"sala: {room}")
+        if _change_type(change) == CHANGE_RESCHEDULED:
+            parts.append("przeniesiona")
+        for key in ("Reason", "Note"):
+            if change.get(key):
+                parts.append(str(change[key]))
+        return ", ".join(parts) if parts else "zmiana"
+    # Fallback: substitution embedded in the schedule entry (some schools).
     sub = lesson.substitution
     if not sub:
         return None
     if _lesson_is_cancelled(lesson):
         return sub.reason or "odwołane"
-    parts: list[str] = []
+    parts = []
     if sub.subject and lesson.subject and sub.subject.name != lesson.subject.name:
         parts.append(f"przedmiot: {sub.subject.name}")
     if sub.teacher_primary:
@@ -78,7 +110,9 @@ def _lesson_change_description(lesson: Schedule) -> str | None:
     return ", ".join(parts) if parts else "zmiana"
 
 
-def _effective_subject(lesson: Schedule) -> str:
+def _effective_subject(lesson: Schedule, change: dict | None = None) -> str:
+    if change and (change.get("Subject") or {}).get("Name"):
+        return change["Subject"]["Name"]
     sub = lesson.substitution
     if sub and sub.subject:
         return sub.subject.name
@@ -87,7 +121,9 @@ def _effective_subject(lesson: Schedule) -> str:
     return lesson.event or "?"
 
 
-def _effective_room(lesson: Schedule) -> str | None:
+def _effective_room(lesson: Schedule, change: dict | None = None) -> str | None:
+    if change and (change.get("Room") or {}).get("Code"):
+        return change["Room"]["Code"]
     sub = lesson.substitution
     if sub and sub.room:
         return sub.room.code
@@ -96,7 +132,9 @@ def _effective_room(lesson: Schedule) -> str | None:
     return None
 
 
-def _effective_teacher(lesson: Schedule) -> str | None:
+def _effective_teacher(lesson: Schedule, change: dict | None = None) -> str | None:
+    if change and (change.get("TeacherPrimary") or {}).get("DisplayName"):
+        return change["TeacherPrimary"]["DisplayName"]
     sub = lesson.substitution
     if sub and sub.teacher_primary:
         return sub.teacher_primary.display_name
@@ -105,16 +143,16 @@ def _effective_teacher(lesson: Schedule) -> str | None:
     return None
 
 
-def _lesson_to_dict(lesson: Schedule) -> dict[str, Any]:
+def _lesson_to_dict(lesson: Schedule, change: dict | None = None) -> dict[str, Any]:
     return {
         "nr": lesson.time_slot.position,
         "od": lesson.time_slot.start.strftime("%H:%M"),
         "do": lesson.time_slot.end.strftime("%H:%M"),
-        "przedmiot": _effective_subject(lesson),
-        "sala": _effective_room(lesson),
-        "nauczyciel": _effective_teacher(lesson),
-        "odwolane": _lesson_is_cancelled(lesson),
-        "zmiana": _lesson_change_description(lesson),
+        "przedmiot": _effective_subject(lesson, change),
+        "sala": _effective_room(lesson, change),
+        "nauczyciel": _effective_teacher(lesson, change),
+        "odwolane": _lesson_is_cancelled(lesson, change),
+        "zmiana": _lesson_change_description(lesson, change),
     }
 
 
@@ -123,10 +161,12 @@ def _lesson_start(lesson: Schedule) -> datetime:
     return naive.replace(tzinfo=dt_util.get_default_time_zone())
 
 
-def _day_plan(schedule: list[Schedule], day: date) -> list[dict[str, Any]]:
+def _day_plan(
+    schedule: list[Schedule], day: date, changes: dict[int, dict]
+) -> list[dict[str, Any]]:
     lessons = [lesson for lesson in schedule if lesson.date_ == day]
     lessons.sort(key=lambda lesson: lesson.time_slot.position)
-    return [_lesson_to_dict(lesson) for lesson in lessons]
+    return [_lesson_to_dict(lesson, changes.get(lesson.id)) for lesson in lessons]
 
 
 class EduVulcanEntity(CoordinatorEntity[EduVulcanCoordinator], SensorEntity):
@@ -173,10 +213,12 @@ class NextLessonSensor(EduVulcanEntity):
 
     def _next_lesson(self) -> Schedule | None:
         now = dt_util.now()
+        changes = self.pupil_data.schedule_changes
         upcoming = [
             lesson
             for lesson in self.pupil_data.schedule
-            if not _lesson_is_cancelled(lesson) and _lesson_start(lesson) >= now
+            if not _lesson_is_cancelled(lesson, changes.get(lesson.id))
+            and _lesson_start(lesson) >= now
         ]
         if not upcoming:
             return None
@@ -187,17 +229,20 @@ class NextLessonSensor(EduVulcanEntity):
         lesson = self._next_lesson()
         if lesson is None:
             return "brak lekcji"
+        change = self.pupil_data.schedule_changes.get(lesson.id)
         start = _lesson_start(lesson)
         prefix = "" if start.date() == dt_util.now().date() else f"{start:%a} "
-        return f"{_effective_subject(lesson)} ({prefix}{start:%H:%M})"
+        return f"{_effective_subject(lesson, change)} ({prefix}{start:%H:%M})"
 
     def _next_school_day(self, after: date) -> date | None:
         """First day after `after` that has any (not cancelled) lesson."""
+        changes = self.pupil_data.schedule_changes
         days = sorted(
             {
                 lesson.date_
                 for lesson in self.pupil_data.schedule
-                if lesson.date_ > after and not _lesson_is_cancelled(lesson)
+                if lesson.date_ > after
+                and not _lesson_is_cancelled(lesson, changes.get(lesson.id))
             }
         )
         return days[0] if days else None
@@ -205,18 +250,25 @@ class NextLessonSensor(EduVulcanEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         today = dt_util.now().date()
+        changes = self.pupil_data.schedule_changes
         lesson = self._next_lesson()
         next_day = self._next_school_day(today)
         return {
             "nastepna_lekcja_start": (
                 _lesson_start(lesson).isoformat() if lesson else None
             ),
-            "nastepna_lekcja_sala": _effective_room(lesson) if lesson else None,
-            "dzis": _day_plan(self.pupil_data.schedule, today),
-            "jutro": _day_plan(self.pupil_data.schedule, today + timedelta(days=1)),
+            "nastepna_lekcja_sala": (
+                _effective_room(lesson, changes.get(lesson.id)) if lesson else None
+            ),
+            "dzis": _day_plan(self.pupil_data.schedule, today, changes),
+            "jutro": _day_plan(
+                self.pupil_data.schedule, today + timedelta(days=1), changes
+            ),
             "nastepny_dzien_szkolny": next_day.isoformat() if next_day else None,
             "nastepny_dzien_szkolny_plan": (
-                _day_plan(self.pupil_data.schedule, next_day) if next_day else []
+                _day_plan(self.pupil_data.schedule, next_day, changes)
+                if next_day
+                else []
             ),
         }
 

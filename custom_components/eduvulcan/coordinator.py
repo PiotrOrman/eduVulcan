@@ -31,6 +31,10 @@ class PupilData:
 
     account: Account
     schedule: list[Schedule] = field(default_factory=list)
+    # Raw entries from mobile/schedule/changes/byPupil keyed by ScheduleId —
+    # eduVULCAN publishes substitutions/cancellations THERE, not embedded in
+    # the withchanges schedule (verified live 2026-09-21).
+    schedule_changes: dict[int, dict] = field(default_factory=dict)
     homework: list[Homework] = field(default_factory=list)
     exams: list[Exam] = field(default_factory=list)
     lucky_number: int | None = None
@@ -91,6 +95,34 @@ class EduVulcanCoordinator(DataUpdateCoordinator[dict[int, PupilData]]):
                 pupil_data.schedule = [
                     Schedule.model_validate(entry) for entry in envelope
                 ]
+
+                # Substitutions/cancellations live in a SEPARATE endpoint
+                # (mobile/schedule/changes/byPupil), linked via ScheduleId.
+                changes_envelope = await self.api._http.request(  # noqa: SLF001
+                    method="GET",
+                    rest_url=rest_url,
+                    pupil_id=pupil_id,
+                    endpoint="mobile/schedule/changes/byPupil",
+                    query={
+                        "pupilId": pupil_id,
+                        "dateFrom": today,
+                        "dateTo": today + timedelta(days=SCHEDULE_DAYS_AHEAD),
+                        "lastId": -2_147_483_648,
+                        "pageSize": 500,
+                        "lastSyncDate": datetime(1970, 1, 1, 1, 0, 0),
+                    },
+                ) or []
+                pupil_data.schedule_changes = {
+                    change["ScheduleId"]: change
+                    for change in changes_envelope
+                    if isinstance(change, dict) and change.get("ScheduleId") is not None
+                }
+                if changes_envelope and _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "eduVULCAN raw schedule changes (pupil %s): %s",
+                        pupil_id,
+                        json.dumps(changes_envelope, ensure_ascii=False, default=str),
+                    )
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     if envelope:
                         _LOGGER.debug(
