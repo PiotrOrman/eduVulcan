@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "eduVULCAN registration",
+        "description": "Log in at https://eduvulcan.pl/api/ap in your browser, open the page source and copy the value of the hidden <input> element (a JSON with a \"Tokens\" list) — or just the JWT token(s). Paste it below. Tokens are one-time use and are not stored.",
+        "data": {
+          "tokens": "JWT token(s) or the JSON from /api/ap"
+        }
+      }
+    },
+    "error": {
+      "no_tokens": "No JWT token found in the pasted text.",
+      "invalid_jwt": "The JWT could not be decoded (no tenant in payload).",
+      "invalid_token": "Vulcan rejected the token (wrong, expired or already used). Log in again and copy a fresh one.",
+      "cannot_connect": "Cannot connect to the Vulcan API.",
+      "no_pupils": "Registration succeeded but no pupils were returned.",
+      "unknown": "Unexpected error — check the logs."
+    },
+    "abort": {
+      "already_configured": "This eduVULCAN account is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_lesson": { "name": "Next lesson" },
+      "homework": { "name": "Homework" },
+      "exams": { "name": "Exams" },
+      "lucky_number": { "name": "Lucky number" }
+    }
+  }
+}

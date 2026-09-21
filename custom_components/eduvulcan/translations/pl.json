@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Rejestracja eduVULCAN",
+        "description": "Zaloguj się w przeglądarce na https://eduvulcan.pl/api/ap, otwórz źródło strony i skopiuj wartość ukrytego pola <input> (JSON z listą \"Tokens\") — albo same tokeny JWT. Wklej poniżej. Tokeny są jednorazowe i nie są nigdzie zapisywane.",
+        "data": {
+          "tokens": "Token(y) JWT lub JSON z /api/ap"
+        }
+      }
+    },
+    "error": {
+      "no_tokens": "W wklejonym tekście nie znaleziono tokenu JWT.",
+      "invalid_jwt": "Nie udało się zdekodować JWT (brak pola tenant).",
+      "invalid_token": "Vulcan odrzucił token (błędny, wygasły lub już użyty). Zaloguj się ponownie i skopiuj świeży.",
+      "cannot_connect": "Brak połączenia z API Vulcana.",
+      "no_pupils": "Rejestracja się powiodła, ale nie zwrócono żadnych uczniów.",
+      "unknown": "Nieoczekiwany błąd — sprawdź logi."
+    },
+    "abort": {
+      "already_configured": "To konto eduVULCAN jest już skonfigurowane."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "next_lesson": { "name": "Następna lekcja" },
+      "homework": { "name": "Zadania domowe" },
+      "exams": { "name": "Sprawdziany" },
+      "lucky_number": { "name": "Szczęśliwy numerek" }
+    }
+  }
+}
