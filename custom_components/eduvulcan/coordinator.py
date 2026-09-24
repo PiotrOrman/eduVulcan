@@ -117,12 +117,31 @@ class EduVulcanCoordinator(DataUpdateCoordinator[dict[int, PupilData]]):
                     for change in changes_envelope
                     if isinstance(change, dict) and change.get("ScheduleId") is not None
                 }
-                if changes_envelope and _LOGGER.isEnabledFor(logging.DEBUG):
+                if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug(
-                        "eduVULCAN raw schedule changes (pupil %s): %s",
+                        "eduVULCAN schedule changes count (pupil %s): %s",
                         pupil_id,
-                        json.dumps(changes_envelope, ensure_ascii=False, default=str),
+                        len(changes_envelope),
                     )
+                    if changes_envelope:
+                        _LOGGER.debug(
+                            "eduVULCAN raw schedule changes (pupil %s): %s",
+                            pupil_id,
+                            json.dumps(changes_envelope, ensure_ascii=False, default=str),
+                        )
+                    # Full raw dump of the next 2 days of schedule entries —
+                    # to find where this school hides substitution info.
+                    horizon = {
+                        (today + timedelta(days=offset)).isoformat()
+                        for offset in (0, 1, 2)
+                    }
+                    for entry in envelope:
+                        if str(entry.get("DateAt", ""))[:10] in horizon:
+                            _LOGGER.debug(
+                                "eduVULCAN raw lesson (pupil %s): %s",
+                                pupil_id,
+                                json.dumps(entry, ensure_ascii=False, default=str),
+                            )
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     if envelope:
                         _LOGGER.debug(
