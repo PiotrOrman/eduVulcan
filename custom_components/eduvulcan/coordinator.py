@@ -7,6 +7,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
+from pydantic import ValidationError
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -197,6 +199,9 @@ class EduVulcanCoordinator(DataUpdateCoordinator[dict[int, PupilData]]):
                 ) from err
 
             # Lucky number is nice-to-have; don't fail the whole update on it.
+            # NOTE: on weekends/holidays Vulcan returns an empty envelope (None),
+            # which makes LuckyNumber.model_validate raise ValidationError —
+            # catch broadly, this block must never kill the whole refresh.
             try:
                 lucky = await self.api.get_lucky_number(
                     rest_url=rest_url,
@@ -205,7 +210,7 @@ class EduVulcanCoordinator(DataUpdateCoordinator[dict[int, PupilData]]):
                     day=today,
                 )
                 pupil_data.lucky_number = lucky.number
-            except IrisApiException:
+            except (IrisApiException, ValidationError, AttributeError, TypeError):
                 _LOGGER.debug(
                     "Lucky number unavailable for pupil %s", pupil_id, exc_info=True
                 )
